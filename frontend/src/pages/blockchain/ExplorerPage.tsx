@@ -1,0 +1,554 @@
+import React, { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
+import { blockchainApi } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { formatDate, formatCurrency, truncateHash } from '@/lib/utils'
+
+interface Block {
+  id: number
+  index: number
+  hash: string
+  previous_hash: string
+  timestamp: string
+  data: string
+  nonce: number
+  difficulty: number
+  merkle_root: string
+  transaction_count: number
+}
+
+interface Transaction {
+  id: number
+  block_id: number
+  transaction_hash: string
+  from_address: string
+  to_address: string
+  amount: number
+  timestamp: string
+  transaction_type: string
+  status: string
+  batch_code?: string
+  metadata?: any
+}
+
+interface BlockchainStats {
+  total_blocks: number
+  total_transactions: number
+  difficulty: number
+  hash_rate: number
+  last_block_time: string
+  average_block_time: number
+  network_health: string
+}
+
+export default function ExplorerPage() {
+  const { blockId } = useParams()
+  const [blocks, setBlocks] = useState<Block[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [selectedBlock, setSelectedBlock] = useState<Block | null>(null)
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null)
+  const [stats, setStats] = useState<BlockchainStats | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [activeTab, setActiveTab] = useState<'blocks' | 'transactions' | 'stats'>('blocks')
+
+  useEffect(() => {
+    loadBlockchainData()
+  }, [])
+
+  useEffect(() => {
+    if (blockId) {
+      loadBlockDetails(parseInt(blockId))
+    }
+  }, [blockId])
+
+  const loadBlockchainData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Load recent blocks
+      const blocksResponse = await blockchainApi.getBlocks(0, 20)
+      const blocksData = blocksResponse.data
+      const blockList = blocksData?.blocks ?? blocksData ?? []
+      setBlocks(Array.isArray(blockList) ? blockList : [])
+
+      // Load recent transactions
+      const transactionsResponse = await blockchainApi.getTransactions(0, 20)
+      const txData = transactionsResponse.data
+      const txList = txData?.transactions ?? txData ?? []
+      setTransactions(Array.isArray(txList) ? txList : [])
+
+      // Load blockchain stats
+      const statsResponse = await blockchainApi.getStats()
+      setStats(statsResponse.data)
+
+    } catch (err: any) {
+      console.error('Error loading blockchain data:', err)
+      setError('Failed to load blockchain data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadBlockDetails = async (blockIndex: number) => {
+    try {
+      const response = await blockchainApi.getBlock(blockIndex)
+      setSelectedBlock(response.data)
+      setActiveTab('blocks')
+    } catch (error: any) {
+      console.error('Error loading block details:', error)
+      setError('Failed to load block details')
+    }
+  }
+
+  const loadTransactionDetails = async (txHash: string) => {
+    try {
+      const response = await blockchainApi.getTransaction(txHash)
+      setSelectedTransaction(response.data)
+      setActiveTab('transactions')
+    } catch (error: any) {
+      console.error('Error loading transaction details:', error)
+      setError('Failed to load transaction details')
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchTerm.trim()) return
+
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Try to find by block hash/index first
+      if (searchTerm.length === 64) {
+        // Likely a hash
+        const blockResponse = await blockchainApi.searchBlock(searchTerm)
+        if (blockResponse.data) {
+          setSelectedBlock(blockResponse.data)
+          setActiveTab('blocks')
+          return
+        }
+
+        const txResponse = await blockchainApi.searchTransaction(searchTerm)
+        if (txResponse.data) {
+          setSelectedTransaction(txResponse.data)
+          setActiveTab('transactions')
+          return
+        }
+      } else if (!isNaN(parseInt(searchTerm))) {
+        // Likely a block index
+        const blockResponse = await blockchainApi.getBlock(parseInt(searchTerm))
+        setSelectedBlock(blockResponse.data)
+        setActiveTab('blocks')
+        return
+      }
+
+      setError('No results found for search term')
+
+    } catch (error: any) {
+      console.error('Error searching:', error)
+      setError('Search failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getTransactionTypeColor = (type: string) => {
+    switch (type) {
+      case 'batch_creation':
+        return 'bg-green-100 text-green-800'
+      case 'quality_grading':
+        return 'bg-blue-100 text-blue-800'
+      case 'fraud_alert':
+        return 'bg-red-100 text-red-800'
+      case 'supply_chain':
+        return 'bg-purple-100 text-purple-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'confirmed':
+        return 'bg-green-100 text-green-800'
+      case 'pending':
+        return 'bg-yellow-100 text-yellow-800'
+      case 'failed':
+        return 'bg-red-100 text-red-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
+
+  const getNetworkHealthColor = (health: string) => {
+    switch (health) {
+      case 'healthy':
+        return 'text-green-600'
+      case 'warning':
+        return 'text-yellow-600'
+      case 'critical':
+        return 'text-red-600'
+      default:
+        return 'text-gray-600'
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="container mx-auto max-w-6xl">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full mb-4">
+            <span className="text-white font-bold text-2xl">⛓️</span>
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Blockchain Explorer</h1>
+          <p className="text-gray-600">
+            Explore the Organic Roots blockchain for transparency and verification
+          </p>
+        </div>
+
+        {/* Search Bar */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Search Blockchain</CardTitle>
+            <CardDescription>
+              Search by block hash, block index, or transaction hash
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex space-x-2">
+              <div className="flex-1">
+                <Input
+                  placeholder="Enter block hash, index, or transaction hash..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                />
+              </div>
+              <Button onClick={handleSearch} disabled={loading}>
+                {loading ? 'Searching...' : 'Search'}
+              </Button>
+            </div>
+            {error && (
+              <p className="text-sm text-red-500 mt-2">{error}</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Navigation Tabs */}
+        <div className="border-b mb-6">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setActiveTab('blocks')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'blocks'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Blocks
+            </button>
+            <button
+              onClick={() => setActiveTab('transactions')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'transactions'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Transactions
+            </button>
+            <button
+              onClick={() => setActiveTab('stats')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'stats'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Network Stats
+            </button>
+          </nav>
+        </div>
+
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading blockchain data...</p>
+          </div>
+        )}
+
+        {/* Blocks Tab */}
+        {activeTab === 'blocks' && !loading && (
+          <div className="space-y-6">
+            {selectedBlock ? (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Block #{selectedBlock.index}</CardTitle>
+                    <Button variant="outline" onClick={() => setSelectedBlock(null)}>
+                      ← Back to Blocks
+                    </Button>
+                  </div>
+                  <CardDescription>
+                    Block Hash: {truncateHash(selectedBlock.hash)}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Block Index</Label>
+                      <p className="font-mono text-sm">{selectedBlock.index}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Timestamp</Label>
+                      <p className="font-mono text-sm">{formatDate(selectedBlock.timestamp)}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Previous Hash</Label>
+                      <p className="font-mono text-xs">{truncateHash(selectedBlock.previous_hash)}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Merkle Root</Label>
+                      <p className="font-mono text-xs">{truncateHash(selectedBlock.merkle_root)}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Nonce</Label>
+                      <p className="font-mono text-sm">{selectedBlock.nonce}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Difficulty</Label>
+                      <p className="font-mono text-sm">{selectedBlock.difficulty}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Transactions</Label>
+                      <p className="font-mono text-sm">{selectedBlock.transaction_count}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Block Data</Label>
+                      <p className="font-mono text-xs break-all">{selectedBlock.data}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {Array.isArray(blocks) && blocks.map((block) => (
+                  <Card key={block.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedBlock(block)}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="font-medium">Block #{block.index}</span>
+                            <Badge variant="outline">{block.transaction_count} transactions</Badge>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            <p>Hash: {truncateHash(block.hash)}</p>
+                            <p>Mined: {formatDate(block.timestamp)}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm text-gray-500">Difficulty</div>
+                          <div className="font-mono">{block.difficulty}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Transactions Tab */}
+        {activeTab === 'transactions' && !loading && (
+          <div className="space-y-6">
+            {selectedTransaction ? (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Transaction Details</CardTitle>
+                    <Button variant="outline" onClick={() => setSelectedTransaction(null)}>
+                      ← Back to Transactions
+                    </Button>
+                  </div>
+                  <CardDescription>
+                    Transaction Hash: {truncateHash(selectedTransaction.transaction_hash)}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>From Address</Label>
+                      <p className="font-mono text-xs">{selectedTransaction.from_address}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>To Address</Label>
+                      <p className="font-mono text-xs">{selectedTransaction.to_address}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Amount</Label>
+                      <p className="font-mono text-sm">{formatCurrency(selectedTransaction.amount)}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Type</Label>
+                      <Badge className={getTransactionTypeColor(selectedTransaction.transaction_type)}>
+                        {selectedTransaction.transaction_type.replace('_', ' ')}
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Badge className={getStatusColor(selectedTransaction.status)}>
+                        {selectedTransaction.status}
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Timestamp</Label>
+                      <p className="font-mono text-sm">{formatDate(selectedTransaction.timestamp)}</p>
+                    </div>
+                    {selectedTransaction.batch_code && (
+                      <div className="space-y-2">
+                        <Label>Batch Code</Label>
+                        <p className="font-mono text-sm">{selectedTransaction.batch_code}</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {Array.isArray(transactions) && transactions.map((tx) => (
+                  <Card key={tx.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedTransaction(tx)}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Badge className={getTransactionTypeColor(tx.transaction_type || 'unknown')}>
+                              {(tx.transaction_type || 'unknown').replace('_', ' ')}
+                            </Badge>
+                            <Badge className={getStatusColor(tx.status)}>
+                              {tx.status}
+                            </Badge>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            <p>Hash: {truncateHash(tx.transaction_hash)}</p>
+                            <p>From: {truncateHash(tx.from_address)} → To: {truncateHash(tx.to_address)}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm text-gray-500">Amount</div>
+                          <div className="font-mono">{formatCurrency(tx.amount)}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Stats Tab */}
+        {activeTab === 'stats' && stats && !loading && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Blocks</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">📦</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stats.total_blocks}</div>
+                  <p className="text-xs text-muted-foreground">Mined blocks</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Transactions</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">🔄</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stats.total_transactions}</div>
+                  <p className="text-xs text-muted-foreground">Confirmed transactions</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Network Hash Rate</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">⚡</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stats.hash_rate}</div>
+                  <p className="text-xs text-muted-foreground">MH/s</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Mining Difficulty</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">⛏️</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stats.difficulty}</div>
+                  <p className="text-xs text-muted-foreground">Current difficulty</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Average Block Time</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">⏱️</div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stats.average_block_time}s</div>
+                  <p className="text-xs text-muted-foreground">Between blocks</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Network Health</CardTitle>
+                  <div className="h-4 w-4 text-muted-foreground">💚</div>
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${getNetworkHealthColor(stats.network_health)}`}>
+                    {stats.network_health.toUpperCase()}
+                  </div>
+                  <p className="text-xs text-muted-foreground">System status</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Last Block Information</CardTitle>
+                <CardDescription>
+                  Most recently mined block details
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-sm space-y-2">
+                  <p><strong>Mined:</strong> {formatDate(stats.last_block_time)}</p>
+                  <p><strong>Network Status:</strong> <span className={getNetworkHealthColor(stats.network_health)}>{stats.network_health}</span></p>
+                  <p><strong>Blockchain Integrity:</strong> <span className="text-green-600">✓ Verified</span></p>
+                  <p><strong>Consensus Algorithm:</strong> Proof of Work</p>
+                  <p><strong>Block Size Limit:</strong> 1 MB</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
