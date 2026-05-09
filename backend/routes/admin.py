@@ -52,10 +52,17 @@ class BatchResponse(BaseModel):
 class DashboardStats(BaseModel):
     total_users: int
     total_farmers: int
+    total_consumers: int
+    total_admins: int
     total_products: int
     total_batches: int
+    active_batches: int
+    total_revenue: float
     flagged_events: int
+    blockchain_blocks: int
     blockchain_length: int
+    ai_predictions_today: int
+    fraud_alerts_today: int
     grade_distribution: Dict[str, int]
     recent_activity: List[Dict[str, Any]]
 
@@ -130,12 +137,23 @@ async def _get_dashboard_stats(db: Session):
     # User statistics
     total_users = db.query(User).count()
     total_farmers = db.query(User).filter(User.role == 'farmer').count()
+    total_consumers = db.query(User).filter(User.role == 'consumer').count()
+    total_admins = db.query(User).filter(User.role == 'admin').count()
     
     # Product statistics
     total_products = db.query(Product).count()
     
     # Batch statistics
     total_batches = db.query(Batch).count()
+    active_batches = db.query(Batch).filter(
+        Batch.status.notin_(['SOLD', 'REJECTED'])
+    ).count()
+    
+    # Revenue: total from price_per_kg * quantity_kg
+    total_revenue = db.query(
+        func.sum(Batch.price_per_kg * Batch.quantity_kg)
+    ).scalar() or 0
+    
     grade_distribution = db.query(
         Batch.grade,
         func.count(Batch.id).label('count')
@@ -146,6 +164,19 @@ async def _get_dashboard_stats(db: Session):
     # Flagged events
     flagged_events = db.query(SupplyChainEvent).filter(
         SupplyChainEvent.is_flagged == True
+    ).count()
+    
+    # Fraud alerts today
+    from datetime import date
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    fraud_alerts_today = db.query(SupplyChainEvent).filter(
+        SupplyChainEvent.is_flagged == True,
+        SupplyChainEvent.timestamp >= today_start
+    ).count()
+    
+    # AI predictions today (batches graded today)
+    ai_predictions_today = db.query(Batch).filter(
+        Batch.created_at >= today_start
     ).count()
     
     # Blockchain length
@@ -170,10 +201,17 @@ async def _get_dashboard_stats(db: Session):
     return DashboardStats(
         total_users=total_users,
         total_farmers=total_farmers,
+        total_consumers=total_consumers,
+        total_admins=total_admins,
         total_products=total_products,
         total_batches=total_batches,
+        active_batches=active_batches,
+        total_revenue=round(float(total_revenue), 2),
         flagged_events=flagged_events,
+        blockchain_blocks=blockchain_length,
         blockchain_length=blockchain_length,
+        ai_predictions_today=ai_predictions_today,
+        fraud_alerts_today=fraud_alerts_today,
         grade_distribution=grade_dist_dict,
         recent_activity=recent_activity
     )
@@ -231,16 +269,38 @@ async def get_all_batches(
     batches = db.query(Batch).offset(skip).limit(limit).all()
     return batches
 
-@router.get("/batches/recent", response_model=List[BatchResponse])
+@router.get("/batches/recent")
 async def get_recent_batches(
     limit: int = 10,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Get most recent batches"""
+    """Get most recent batches with product and farmer details"""
     
     batches = db.query(Batch).order_by(desc(Batch.created_at)).limit(limit).all()
-    return batches
+    
+    result = []
+    for batch in batches:
+        result.append({
+            "id": batch.id,
+            "batch_code": batch.batch_code,
+            "product_id": batch.product_id,
+            "farmer_id": batch.farmer_id,
+            "product_name": batch.product.name if batch.product else "Unknown",
+            "farmer_name": batch.farmer.name if batch.farmer else "Unknown",
+            "quantity_kg": round(batch.quantity_kg, 2),
+            "harvest_date": batch.harvest_date.isoformat() if batch.harvest_date else None,
+            "grade": batch.grade,
+            "quality_score": batch.quality_score,
+            "status": batch.status,
+            "created_at": batch.created_at.isoformat() if batch.created_at else None,
+            "blockchain_verified": batch.blockchain_block_index is not None,
+            "fraud_alert": any(
+                e.is_flagged for e in batch.supply_chain_events
+            ) if batch.supply_chain_events else False
+        })
+    
+    return result
 
 @router.get("/batches/{batch_id}", response_model=BatchResponse)
 async def get_batch_detail(

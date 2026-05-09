@@ -2,6 +2,7 @@
 Organic Roots Consumer Routes
 API endpoints for consumer verification and product journey
 """
+import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +17,62 @@ from models.supply_chain import SupplyChainEvent
 from blockchain.chain import blockchain_manager
 
 router = APIRouter(prefix="/consumer", tags=["consumer"])
+
+# Default retail price per kg (₹) when DB value is missing
+_GRADE_PRICE_MAP = {"A": 450, "B": 280, "C": 150}
+
+
+def _effective_price_per_kg(batch: Batch) -> float:
+    if batch.price_per_kg is not None and batch.price_per_kg > 0:
+        return float(batch.price_per_kg)
+    return float(_GRADE_PRICE_MAP.get(batch.grade, 200))
+
+
+def _ai_confidence_from_blockchain(batch: Batch) -> Optional[float]:
+    """Return AI grading confidence as 0.0–1.0 from genesis block data, if present."""
+    if batch.blockchain_block_index is None:
+        return None
+    block = blockchain_manager.get_block(batch.blockchain_block_index)
+    if not block:
+        return None
+    data = block.get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("ai_confidence")
+    if raw is None:
+        raw = data.get("confidence")
+    if raw is None:
+        raw = data.get("confidence_score")
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v > 1.0:
+        v = v / 100.0
+    return v
+
+
+def _farmer_display(user: Optional[User]) -> tuple:
+    if not user:
+        return "Unknown", "Unknown"
+    name = (user.name or "").strip()
+    if not name:
+        name = (user.email or "").strip() or "Unknown"
+    location = (user.location or "").strip() or "Unknown"
+    return name, location
+
+
+def _batch_status_display(batch: Batch) -> str:
+    s = (batch.status or "").strip()
+    return s if s else "Active"
+
 
 # Pydantic models
 class ProductJourneyEvent(BaseModel):
@@ -39,6 +96,9 @@ class ProductJourney(BaseModel):
     grade: str
     quality_score: float
     quantity_kg: float
+    price_per_kg: Optional[float] = 0.0
+    ai_confidence: Optional[float] = None
+    status: str = "Active"
     qr_code_url: str
     journey_events: List[ProductJourneyEvent]
     blockchain_verified: bool
@@ -74,13 +134,8 @@ async def verify_product(
             message="Product information not found"
         )
     
-    # Get farmer information
     farmer = db.query(User).filter(User.id == batch.farmer_id).first()
-    if not farmer:
-        return VerificationResponse(
-            success=False,
-            message="Farmer information not found"
-        )
+    farmer_name, farmer_location = _farmer_display(farmer)
     
     # Get supply chain events
     events = db.query(SupplyChainEvent).filter(
@@ -132,18 +187,24 @@ async def verify_product(
     # Generate QR code URL
     qr_code_url = f"/qr/{batch_code}"
     
-    # Build product journey
+    price_per_kg = _effective_price_per_kg(batch)
+    ai_confidence = _ai_confidence_from_blockchain(batch)
+    status_display = _batch_status_display(batch)
+
     product_journey = ProductJourney(
         batch_code=batch.batch_code,
         product_name=product.name,
         product_type=product.type,
         origin_state=product.origin_state,
-        farmer_name=farmer.name,
-        farmer_location=farmer.location or "Unknown",
+        farmer_name=farmer_name,
+        farmer_location=farmer_location,
         harvest_date=batch.harvest_date,
         grade=batch.grade,
         quality_score=batch.quality_score,
         quantity_kg=batch.quantity_kg,
+        price_per_kg=price_per_kg,
+        ai_confidence=ai_confidence,
+        status=status_display,
         qr_code_url=qr_code_url,
         journey_events=journey_events,
         blockchain_verified=blockchain_verified,
@@ -426,7 +487,8 @@ async def get_product_journey(
         raise HTTPException(status_code=404, detail="Product not found")
     
     farmer = db.query(User).filter(User.id == batch.farmer_id).first()
-    
+    farmer_name, farmer_location = _farmer_display(farmer)
+
     # Get supply chain events
     events = db.query(SupplyChainEvent).filter(
         SupplyChainEvent.batch_id == batch.id
@@ -446,17 +508,24 @@ async def get_product_journey(
             "blockchain_verified": event.blockchain_block_index is not None
         })
     
+    price_per_kg = _effective_price_per_kg(batch)
+    ai_confidence = _ai_confidence_from_blockchain(batch)
+    status_display = _batch_status_display(batch)
+
     return {
         "batch_code": batch.batch_code,
         "product_name": product.name,
         "product_type": product.type,
         "origin_state": product.origin_state,
-        "farmer_name": farmer.name if farmer else "Unknown",
-        "farmer_location": farmer.location if farmer else "Unknown",
+        "farmer_name": farmer_name,
+        "farmer_location": farmer_location,
         "harvest_date": batch.harvest_date.isoformat(),
         "grade": batch.grade,
         "quality_score": batch.quality_score,
         "quantity_kg": batch.quantity_kg,
+        "price_per_kg": price_per_kg,
+        "ai_confidence": ai_confidence,
+        "status": status_display,
         "qr_code_url": f"/qr_codes/qr_{batch.batch_code}.png",
         "journey_events": journey_events,
         "blockchain_verified": batch.blockchain_block_index is not None,

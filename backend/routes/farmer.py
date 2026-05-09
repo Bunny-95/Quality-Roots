@@ -60,7 +60,7 @@ class BatchResponse(BaseModel):
     weight_per_unit: float
     grade: str
     quality_score: float
-    price_per_kg: float = None
+    price_per_kg: Optional[float] = 0.0 
     qr_code_path: str = None
     blockchain_block_index: int = None
     status: str

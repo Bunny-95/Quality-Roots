@@ -116,35 +116,22 @@ async def get_transactions(
     limit: int = 20,
     db: Session = Depends(get_db)
 ):
-    """Get blockchain blocks as transactions with pagination"""
-    
-    try:
-        blocks = db.query(BlockchainBlock).order_by(BlockchainBlock.index.desc()).offset(offset).limit(limit).all()
-        total = db.query(BlockchainBlock).count()
-        
-        return {
-            "transactions": [
-                {
-                    "id": b.id,
-                    "index": b.index,
-                    "hash": b.hash,
-                    "previous_hash": b.previous_hash,
-                    "timestamp": b.timestamp.isoformat() if b.timestamp else None,
-                    "data": b.data_json,
-                    "nonce": b.nonce
-                }
-                for b in blocks
-            ],
-            "total": total,
-            "offset": offset,
-            "limit": limit
-        }
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving transactions: {str(e)}"
-        )
+    blocks = db.query(BlockchainBlock).order_by(BlockchainBlock.index.desc()).offset(offset).limit(limit).all()
+    total = db.query(BlockchainBlock).count()
+    return {
+        "transactions": [
+            {
+                "id": b.id,
+                "index": b.index,
+                "hash": b.hash,
+                "previous_hash": b.previous_hash,
+                "timestamp": b.timestamp,
+                "data": b.data_json,
+                "nonce": b.nonce
+            } for b in blocks
+        ],
+        "total": total
+    }
 
 @router.get("/block/{index}", response_model=BlockResponse)
 async def get_block_by_index(

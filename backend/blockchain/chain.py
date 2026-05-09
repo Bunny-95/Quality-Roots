@@ -43,13 +43,13 @@ class Block:
     def mine_block(self, difficulty: int) -> None:
         """Mine the block using proof-of-work"""
         target = "0" * difficulty
-        print(f"🔨 Mining block {self.index}...")
+        print(f"[MINING] Mining block {self.index}...")
         
         while self.hash[:difficulty] != target:
             self.nonce += 1
             self.hash = self.calculate_hash()
         
-        print(f"✅ Block {self.index} mined: {self.hash}")
+        print(f"[OK] Block {self.index} mined: {self.hash}")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert block to dictionary"""
@@ -115,18 +115,18 @@ class Blockchain:
             
             # Check if current block's hash is correct
             if current_block.hash != current_block.calculate_hash():
-                print(f"❌ Block {current_block.index} has invalid hash")
+                print(f"[ERROR] Block {current_block.index} has invalid hash")
                 return False
             
             # Check if current block points to previous block
             if current_block.previous_hash != previous_block.hash:
-                print(f"❌ Block {current_block.index} has invalid previous hash")
+                print(f"[ERROR] Block {current_block.index} has invalid previous hash")
                 return False
             
             # Check if block was properly mined
             target = "0" * self.difficulty
             if current_block.hash[:self.difficulty] != target:
-                print(f"❌ Block {current_block.index} was not properly mined")
+                print(f"[ERROR] Block {current_block.index} was not properly mined")
                 return False
         
         return True
@@ -163,12 +163,12 @@ class BlockchainManager:
             # Check if we need to create genesis block
             existing_blocks = db.query(BlockchainBlock).count()
             if existing_blocks == 0 and len(self.blockchain.chain) == 0:
-                print("📋 Creating genesis block...")
+                print("[INIT] Creating genesis block...")
                 genesis_block = self.blockchain.create_genesis_block()
                 genesis_block.mine_block(self.blockchain.difficulty)
                 self._save_block_to_db(genesis_block, db)
                 self.blockchain.chain.append(genesis_block)
-                print(f"✅ Genesis block created: {genesis_block.hash}")
+                print(f"[OK] Genesis block created: {genesis_block.hash}")
             self._db_ready = True
         finally:
             db.close()
@@ -181,7 +181,7 @@ class BlockchainManager:
             
             if not blocks:
                 # No blocks in database, will create genesis block later in init()
-                print("📋 No blocks found in database, will create genesis block after tables ready...")
+                print("[INIT] No blocks found in database, will create genesis block after tables ready...")
                 self.blockchain.chain = []
             else:
                 # Load existing blocks
@@ -197,15 +197,15 @@ class BlockchainManager:
                     block.hash = db_block.hash
                     self.blockchain.chain.append(block)
                 
-                print(f"📋 Loaded {len(blocks)} blocks from database")
+                print(f"[INIT] Loaded {len(blocks)} blocks from database")
                 self._db_ready = True
                 
                 # Validate loaded chain
                 if not self.blockchain.is_chain_valid():
-                    print("⚠️ Loaded chain is invalid! This should not happen.")
+                    print("[WARN] Loaded chain is invalid! This should not happen.")
         except Exception as e:
             # Table doesn't exist yet, initialize empty chain
-            print(f"⚠️ Database tables not ready yet (will initialize later): {type(e).__name__}")
+            print(f"[WARN] Database tables not ready yet (will initialize later): {type(e).__name__}")
             self.blockchain.chain = []
         finally:
             db.close()
@@ -233,7 +233,7 @@ class BlockchainManager:
             # Save to database
             self._save_block_to_db(block, db)
             
-            print(f"🔗 Added supply chain event to blockchain: Block {block.index}")
+            print(f"[CHAIN] Added supply chain event to blockchain: Block {block.index}")
             return block
         
         finally:
@@ -280,7 +280,7 @@ blockchain_manager = BlockchainManager()
 # Test function
 def test_blockchain():
     """Test blockchain functionality"""
-    print("🧪 Testing blockchain functionality...")
+    print("[TEST] Testing blockchain functionality...")
     
     # Test adding supply chain events
     test_events = [
@@ -315,7 +315,7 @@ def test_blockchain():
     chain = blockchain_manager.get_chain()
     print(f"Chain length: {len(chain)}")
     
-    print("🎉 Blockchain tests completed!")
+    print("[TEST] Blockchain tests completed!")
 
 if __name__ == "__main__":
     test_blockchain()
