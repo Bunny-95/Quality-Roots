@@ -42,11 +42,8 @@ def run_seed():
         # Create products
         create_products(db)
         
-        # Create batches
+        # Create batches (includes full supply-chain journey on-chain per batch)
         create_batches(db)
-        
-        # Create supply chain events
-        create_supply_chain_events(db)
         
         print("✅ Seed data generation completed!")
         
@@ -169,13 +166,40 @@ def create_products(db):
     db.commit()
     print(f"   ✅ Created {len(products)} products")
 
+# Full journey after BATCH_CREATED (each becomes its own mined block)
+JOURNEY_EVENT_TYPES = [
+    "QUALITY_CHECKED",
+    "DISPATCHED",
+    "IN_TRANSIT",
+    "RECEIVED_DISTRIBUTOR",
+    "RECEIVED_RETAILER",
+]
+
+JOURNEY_ACTORS = [
+    {"name": "Quality Inspector", "role": "admin"},
+    {"name": "Logistics Coordinator", "role": "distributor"},
+    {"name": "Transport Manager", "role": "distributor"},
+    {"name": "Warehouse Manager", "role": "distributor"},
+    {"name": "Retail Store Manager", "role": "retailer"},
+]
+
+JOURNEY_LOCATIONS = [
+    "Quality Lab, Bangalore",
+    "Distribution Center, Mumbai",
+    "Transit Hub, Pune",
+    "Warehouse, Delhi",
+    "Retail Store, Chennai",
+]
+
+
 def create_batches(db):
-    """Create seed batches"""
+    """Create seed batches, genesis BATCH_CREATED on-chain, then full journey per batch."""
     print("   📦 Creating batches...")
     
     products = db.query(Product).all()
     
     batches = []
+    grade_results: List[Dict[str, Any]] = []
     batch_counter = 1
     
     for product in products:
@@ -249,16 +273,17 @@ def create_batches(db):
             
             db.add(batch)
             batches.append(batch)
+            grade_results.append(grade_result)
     
     db.commit()
     
-    # Generate QR codes for all batches
-    for batch in batches:
+    # Generate QR codes, BATCH_CREATED block, and full journey (one block per milestone)
+    for idx, batch in enumerate(batches):
+        grade_result = grade_results[idx]
         qr_result = qr_generator.create_qr_code(batch.batch_code)
         batch.qr_code_path = qr_result['relative_path']
         
-        # Record blockchain event
-        blockchain_data = {
+        created_block = blockchain_manager.add_supply_chain_event({
             "event_type": "BATCH_CREATED",
             "batch_code": batch.batch_code,
             "product_id": batch.product_id,
@@ -266,71 +291,138 @@ def create_batches(db):
             "quantity_kg": batch.quantity_kg,
             "grade": batch.grade,
             "quality_score": batch.quality_score,
-            "ai_confidence": grade_result['confidence'],
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        block = blockchain_manager.add_supply_chain_event(blockchain_data)
-        batch.blockchain_block_index = block.index
+            "ai_confidence": grade_result["confidence"],
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        batch.blockchain_block_index = created_block.index
+
+        base_time = datetime.utcnow() - timedelta(days=random.randint(5, 25))
+        for step, event_type in enumerate(JOURNEY_EVENT_TYPES):
+            event_time = base_time + timedelta(hours=step * 6 + random.randint(0, 3))
+            chain_payload = {
+                "event_type": event_type,
+                "batch_code": batch.batch_code,
+                "product_id": batch.product_id,
+                "farmer_id": batch.farmer_id,
+                "quantity_kg": batch.quantity_kg,
+                "grade": batch.grade,
+                "quality_score": batch.quality_score,
+                "timestamp": event_time.isoformat(),
+            }
+            journey_block = blockchain_manager.add_supply_chain_event(chain_payload)
+            db.add(SupplyChainEvent(
+                batch_id=batch.id,
+                event_type=event_type,
+                actor_name=JOURNEY_ACTORS[step]["name"],
+                actor_role=JOURNEY_ACTORS[step]["role"],
+                location=JOURNEY_LOCATIONS[step],
+                notes=f"Seeded journey step: {event_type}",
+                timestamp=event_time,
+                blockchain_block_index=journey_block.index,
+            ))
     
     db.commit()
-    print(f"   ✅ Created {len(batches)} batches with QR codes")
+    print(
+        f"   ✅ Created {len(batches)} batches with QR codes and "
+        f"{len(JOURNEY_EVENT_TYPES)} journey events per batch on-chain"
+    )
 
-def create_supply_chain_events(db):
-    """Create seed supply chain events"""
-    print("   🔗 Creating supply chain events...")
-    
-    batches = db.query(Batch).all()
-    
-    event_types = [
-        "QUALITY_CHECKED",
-        "DISPATCHED", 
-        "IN_TRANSIT",
-        "RECEIVED_DISTRIBUTOR",
-        "RECEIVED_RETAILER",
-        "SOLD"
-    ]
-    
-    actors = [
-        {"name": "Quality Inspector", "role": "admin"},
-        {"name": "Logistics Coordinator", "role": "distributor"},
-        {"name": "Transport Manager", "role": "distributor"},
-        {"name": "Warehouse Manager", "role": "distributor"},
-        {"name": "Retail Store Manager", "role": "retailer"},
-        {"name": "End Consumer", "role": "consumer"}
-    ]
-    
-    locations = [
-        "Quality Lab, Bangalore",
-        "Distribution Center, Mumbai",
-        "Transit Hub, Pune",
-        "Warehouse, Delhi",
-        "Retail Store, Chennai",
-        "Customer Address, Kolkata"
-    ]
-    
-    total_events = 0
-    
-    for batch in batches:
-        # Create events for each batch
-        for i, event_type in enumerate(event_types):
-            # Add some randomness - not all batches have complete journey
-            if random.random() < 0.8:  # 80% chance to have this event
+def add_demo_supply_chain_events():
+    """Add realistic supply chain progression to existing batches for demo purposes.
+    Only runs if the supply_chain_events table has fewer than 10 rows.
+    """
+    db = next(get_db())
+
+    try:
+        existing_events = db.query(SupplyChainEvent).count()
+        if existing_events >= 10:
+            print("✅ Supply chain events already seeded, skipping demo events")
+            return
+
+        batches = db.query(Batch).limit(10).all()
+        if not batches:
+            print("⚠️ No batches found, skipping demo supply chain events")
+            return
+
+        print("🚚 Adding demo supply chain events...")
+
+        scenarios = [
+            [0, ['QUALITY_CHECKED', 'DISPATCHED', 'IN_TRANSIT', 'RECEIVED_DISTRIBUTOR', 'RECEIVED_RETAILER', 'SOLD']],
+            [1, ['QUALITY_CHECKED', 'DISPATCHED', 'IN_TRANSIT', 'RECEIVED_DISTRIBUTOR']],
+            [2, ['QUALITY_CHECKED', 'DISPATCHED', 'IN_TRANSIT']],
+            [3, ['QUALITY_CHECKED', 'DISPATCHED']],
+            [4, ['QUALITY_CHECKED']],
+        ]
+
+        event_details = {
+            'QUALITY_CHECKED': {'actor': 'Quality Inspector', 'role': 'admin', 'location': 'Farm Inspection Center'},
+            'DISPATCHED': {'actor': 'Logistics Partner', 'role': 'distributor', 'location': 'Farm Warehouse'},
+            'IN_TRANSIT': {'actor': 'Transport Co.', 'role': 'distributor', 'location': 'Highway NH-44'},
+            'RECEIVED_DISTRIBUTOR': {'actor': 'FreshMart Distributor', 'role': 'distributor', 'location': 'Bengaluru Warehouse'},
+            'RECEIVED_RETAILER': {'actor': 'Green Bazaar Retail', 'role': 'retailer', 'location': 'Koramangala Store'},
+            'SOLD': {'actor': 'Green Bazaar Retail', 'role': 'retailer', 'location': 'Koramangala Store'},
+        }
+
+        for batch_idx, events in scenarios:
+            if batch_idx >= len(batches):
+                continue
+            batch = batches[batch_idx]
+            base_time = datetime.now() - timedelta(days=5)
+
+            for i, event_type in enumerate(events):
+                details = event_details[event_type]
+                event_time = base_time + timedelta(hours=i * 8)
+
+                # Add supply chain event to DB
                 event = SupplyChainEvent(
                     batch_id=batch.id,
                     event_type=event_type,
-                    actor_name=actors[i]["name"],
-                    actor_role=actors[i]["role"],
-                    location=locations[i],
-                    notes=f"Standard {event_type.lower()} processing",
-                    timestamp=datetime.now() - timedelta(days=random.randint(1, 20), hours=random.randint(1, 23))
+                    actor_name=details['actor'],
+                    actor_role=details['role'],
+                    location=details['location'],
+                    notes=f"{event_type.replace('_', ' ').title()} completed successfully",
+                    timestamp=event_time,
+                    blockchain_block_index=0,
+                    is_flagged=False,
                 )
-                
                 db.add(event)
-                total_events += 1
-    
-    db.commit()
-    print(f"   ✅ Created {total_events} supply chain events")
+
+                # Record on blockchain
+                block_data = {
+                    'event_type': event_type,
+                    'batch_code': batch.batch_code,
+                    'actor': details['actor'],
+                    'location': details['location'],
+                    'timestamp': event_time.isoformat(),
+                }
+                blockchain_manager.add_supply_chain_event(block_data)
+
+                # Update batch status and price
+                if event_type == 'SOLD':
+                    batch.status = 'SOLD'
+                    grade_price = {'A': 450, 'B': 280, 'C': 150}
+                    batch.price_per_kg = grade_price.get(batch.grade, 200)
+                elif event_type == 'IN_TRANSIT':
+                    batch.status = 'IN_TRANSIT'
+                elif event_type == 'DISPATCHED':
+                    batch.status = 'DISPATCHED'
+                elif event_type == 'RECEIVED_DISTRIBUTOR':
+                    batch.status = 'RECEIVED_DISTRIBUTOR'
+                elif event_type == 'RECEIVED_RETAILER':
+                    batch.status = 'RECEIVED_RETAILER'
+                elif event_type == 'QUALITY_CHECKED':
+                    batch.status = 'QUALITY_CHECKED'
+
+            db.commit()
+
+        print("✅ Demo supply chain events added successfully!")
+
+    except Exception as e:
+        print(f"❌ Error adding demo supply chain events: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     run_seed()

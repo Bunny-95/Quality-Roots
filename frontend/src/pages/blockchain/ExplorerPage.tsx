@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { blockchainApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -6,56 +6,109 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { formatDate, formatCurrency, truncateHash } from '@/lib/utils'
+import { formatDate, truncateHash } from '@/lib/utils'
 
 interface Block {
-  id: number
+  id?: number
   index: number
   hash: string
-  previous_hash: string
+  previous_hash?: string
   timestamp: string
-  data: string
-  nonce: number
-  difficulty: number
-  merkle_root: string
-  transaction_count: number
+  data?: string
+  nonce?: number
+  difficulty?: number
+  merkle_root?: string
+  transaction_count?: number
 }
 
-interface Transaction {
-  id: number
-  block_id: number
-  transaction_hash: string
-  from_address: string
-  to_address: string
-  amount: number
+/** API /blockchain/transactions — one row per block (chain record) */
+interface ChainTransaction {
+  id?: number
+  index: number
+  hash: string
+  previous_hash?: string
   timestamp: string
-  transaction_type: string
-  status: string
-  batch_code?: string
-  metadata?: any
+  data?: string
+  nonce?: number
 }
 
 interface BlockchainStats {
   total_blocks: number
   total_transactions: number
   difficulty: number
-  hash_rate: number
+  hash_rate: number | string
   last_block_time: string
   average_block_time: number
   network_health: string
 }
 
+function parseTxPayload(data: string | undefined): {
+  event_type?: string
+  batch_code?: string
+} {
+  if (!data || typeof data !== 'string') return {}
+  try {
+    const j = JSON.parse(data) as { event_type?: string; batch_code?: string }
+    return {
+      event_type: j?.event_type,
+      batch_code: j?.batch_code,
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** Map FastAPI /blockchain/stats (chain-based) to UI fields */
+function normalizeBlockchainStats(raw: Record<string, unknown> | null): BlockchainStats | null {
+  if (!raw) return null
+  const chainLen = Number(
+    raw.chain_length ?? raw.total_blocks_mined ?? raw.total_blocks ?? 0
+  )
+  const totalTx = Number(raw.total_transactions ?? raw.total_events ?? chainLen)
+  const avg = Number(raw.average_block_time ?? raw.average_block_time_seconds ?? 0)
+  const lastRaw = raw.latest_block_timestamp ?? raw.last_block_time
+  const lastStr =
+    typeof lastRaw === 'string'
+      ? lastRaw
+      : lastRaw != null
+        ? String(lastRaw)
+        : ''
+  const healthRaw = raw.network_health ?? raw.status ?? 'healthy'
+  const health = typeof healthRaw === 'string' ? healthRaw : 'healthy'
+  return {
+    total_blocks: chainLen,
+    total_transactions: totalTx,
+    difficulty: Number(raw.difficulty ?? 2),
+    hash_rate: typeof raw.hash_rate === 'number' ? raw.hash_rate : '—',
+    last_block_time: lastStr,
+    average_block_time: avg,
+    network_health: health,
+  }
+}
+
 export default function ExplorerPage() {
   const { blockId } = useParams()
   const [blocks, setBlocks] = useState<Block[]>([])
-  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [transactions, setTransactions] = useState<ChainTransaction[]>([])
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null)
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null)
+  const [selectedTransaction, setSelectedTransaction] = useState<ChainTransaction | null>(null)
   const [stats, setStats] = useState<BlockchainStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [searchTerm, setSearchTerm] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<'blocks' | 'transactions' | 'stats'>('blocks')
+
+  const filteredBlocks = blocks.filter(block => {
+    if (!searchQuery.trim()) return true
+    const query = searchQuery.toLowerCase().trim()
+    return (
+      block.hash?.toLowerCase().includes(query) ||
+      block.previous_hash?.toLowerCase().includes(query) ||
+      block.index?.toString().includes(query) ||
+      block.data?.toLowerCase().includes(query) ||
+      JSON.stringify(block).toLowerCase().includes(query)
+    )
+  })
 
   useEffect(() => {
     loadBlockchainData()
@@ -74,8 +127,8 @@ export default function ExplorerPage() {
 
       // Load recent blocks
       const blocksResponse = await blockchainApi.getBlocks(0, 20)
-      const blocksData = blocksResponse.data
-      const blockList = blocksData?.blocks ?? blocksData ?? []
+      const response = blocksResponse
+      const blockList = response.data.transactions ?? response.data.blocks ?? response.data ?? []
       setBlocks(Array.isArray(blockList) ? blockList : [])
 
       // Load recent transactions
@@ -86,11 +139,12 @@ export default function ExplorerPage() {
 
       // Load blockchain stats
       const statsResponse = await blockchainApi.getStats()
-      setStats(statsResponse.data)
+      setStats(normalizeBlockchainStats(statsResponse.data as Record<string, unknown>))
 
     } catch (err: any) {
       console.error('Error loading blockchain data:', err)
       setError('Failed to load blockchain data')
+      setStats(null)
     } finally {
       setLoading(false)
     }
@@ -107,62 +161,21 @@ export default function ExplorerPage() {
     }
   }
 
-  const loadTransactionDetails = async (txHash: string) => {
-    try {
-      const response = await blockchainApi.getTransaction(txHash)
-      setSelectedTransaction(response.data)
-      setActiveTab('transactions')
-    } catch (error: any) {
-      console.error('Error loading transaction details:', error)
-      setError('Failed to load transaction details')
-    }
-  }
-
   const handleSearch = async () => {
-    if (!searchTerm.trim()) return
-
-    try {
-      setLoading(true)
-      setError(null)
-
-      // Try to find by block hash/index first
-      if (searchTerm.length === 64) {
-        // Likely a hash
-        const blockResponse = await blockchainApi.searchBlock(searchTerm)
-        if (blockResponse.data) {
-          setSelectedBlock(blockResponse.data)
-          setActiveTab('blocks')
-          return
-        }
-
-        const txResponse = await blockchainApi.searchTransaction(searchTerm)
-        if (txResponse.data) {
-          setSelectedTransaction(txResponse.data)
-          setActiveTab('transactions')
-          return
-        }
-      } else if (!isNaN(parseInt(searchTerm))) {
-        // Likely a block index
-        const blockResponse = await blockchainApi.getBlock(parseInt(searchTerm))
-        setSelectedBlock(blockResponse.data)
-        setActiveTab('blocks')
-        return
-      }
-
-      setError('No results found for search term')
-
-    } catch (error: any) {
-      console.error('Error searching:', error)
-      setError('Search failed')
-    } finally {
-      setLoading(false)
-    }
+    // Client-side filtering is handled automatically by filteredBlocks
+    // Clear any previous errors
+    setError(null)
   }
 
   const getTransactionTypeColor = (type: string) => {
-    switch (type) {
+    const t = (type || '').toUpperCase()
+    switch (t) {
+      case 'BATCH_CREATED':
       case 'batch_creation':
         return 'bg-green-100 text-green-800'
+      case 'GENESIS':
+        return 'bg-slate-100 text-slate-800'
+      case 'QUALITY_CHECKED':
       case 'quality_grading':
         return 'bg-blue-100 text-blue-800'
       case 'fraud_alert':
@@ -174,22 +187,11 @@ export default function ExplorerPage() {
     }
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'confirmed':
-        return 'bg-green-100 text-green-800'
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'failed':
-        return 'bg-red-100 text-red-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
-
-  const getNetworkHealthColor = (health: string) => {
-    switch (health) {
+  const getNetworkHealthColor = (health: string | undefined) => {
+    const h = (health ?? '').toLowerCase()
+    switch (h) {
       case 'healthy':
+      case 'operational':
         return 'text-green-600'
       case 'warning':
         return 'text-yellow-600'
@@ -227,8 +229,8 @@ export default function ExplorerPage() {
               <div className="flex-1">
                 <Input
                   placeholder="Enter block hash, index, or transaction hash..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                 />
               </div>
@@ -318,7 +320,7 @@ export default function ExplorerPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Merkle Root</Label>
-                      <p className="font-mono text-xs">{truncateHash(selectedBlock.merkle_root)}</p>
+                      <p className="font-mono text-xs">{truncateHash(selectedBlock.merkle_root ?? '')}</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Nonce</Label>
@@ -326,11 +328,11 @@ export default function ExplorerPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Difficulty</Label>
-                      <p className="font-mono text-sm">{selectedBlock.difficulty}</p>
+                      <p className="font-mono text-sm">{selectedBlock.difficulty ?? '—'}</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Transactions</Label>
-                      <p className="font-mono text-sm">{selectedBlock.transaction_count}</p>
+                      <p className="font-mono text-sm">{selectedBlock.transaction_count ?? '—'}</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Block Data</Label>
@@ -341,23 +343,28 @@ export default function ExplorerPage() {
               </Card>
             ) : (
               <div className="space-y-4">
-                {Array.isArray(blocks) && blocks.map((block) => (
-                  <Card key={block.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedBlock(block)}>
+                <div className="text-sm text-gray-600 mb-4">
+                  Showing {filteredBlocks.length} of {blocks.length} blocks
+                </div>
+                {Array.isArray(filteredBlocks) && filteredBlocks.map((block) => (
+                  <Card key={block.id ?? block.index} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedBlock(block)}>
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <div className="flex items-center space-x-2 mb-2">
                             <span className="font-medium">Block #{block.index}</span>
-                            <Badge variant="outline">{block.transaction_count} transactions</Badge>
+                            <Badge variant="outline">
+                              {(block.transaction_count ?? 1)} record(s)
+                            </Badge>
                           </div>
                           <div className="text-sm text-gray-600">
                             <p>Hash: {truncateHash(block.hash)}</p>
                             <p>Mined: {formatDate(block.timestamp)}</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-sm text-gray-500">Difficulty</div>
-                          <div className="font-mono">{block.difficulty}</div>
+                          <div className="text-right">
+                          <div className="text-sm text-gray-500">Nonce</div>
+                          <div className="font-mono">{block.nonce ?? '—'}</div>
                         </div>
                       </div>
                     </CardContent>
@@ -375,89 +382,114 @@ export default function ExplorerPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle>Transaction Details</CardTitle>
+                    <CardTitle>Chain record #{selectedTransaction.index}</CardTitle>
                     <Button variant="outline" onClick={() => setSelectedTransaction(null)}>
                       ← Back to Transactions
                     </Button>
                   </div>
                   <CardDescription>
-                    Transaction Hash: {truncateHash(selectedTransaction.transaction_hash)}
+                    Hash: {truncateHash(selectedTransaction.hash)}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>From Address</Label>
-                      <p className="font-mono text-xs">{selectedTransaction.from_address}</p>
+                      <Label>Block index</Label>
+                      <p className="font-mono text-sm">#{selectedTransaction.index}</p>
                     </div>
                     <div className="space-y-2">
-                      <Label>To Address</Label>
-                      <p className="font-mono text-xs">{selectedTransaction.to_address}</p>
+                      <Label>Nonce</Label>
+                      <p className="font-mono text-sm">{selectedTransaction.nonce ?? '—'}</p>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Full hash</Label>
+                      <p className="font-mono text-xs break-all">{selectedTransaction.hash}</p>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Previous hash</Label>
+                      <p className="font-mono text-xs break-all">
+                        {selectedTransaction.previous_hash
+                          ? truncateHash(selectedTransaction.previous_hash)
+                          : '—'}
+                      </p>
                     </div>
                     <div className="space-y-2">
-                      <Label>Amount</Label>
-                      <p className="font-mono text-sm">{formatCurrency(selectedTransaction.amount)}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Type</Label>
-                      <Badge className={getTransactionTypeColor(selectedTransaction.transaction_type)}>
-                        {selectedTransaction.transaction_type.replace('_', ' ')}
+                      <Label>Event</Label>
+                      <Badge className={getTransactionTypeColor(parseTxPayload(selectedTransaction.data).event_type || '')}>
+                        {(parseTxPayload(selectedTransaction.data).event_type ?? 'N/A').replace(/_/g, ' ')}
                       </Badge>
                     </div>
                     <div className="space-y-2">
-                      <Label>Status</Label>
-                      <Badge className={getStatusColor(selectedTransaction.status)}>
-                        {selectedTransaction.status}
-                      </Badge>
+                      <Label>Batch</Label>
+                      <p className="font-mono text-sm">
+                        {parseTxPayload(selectedTransaction.data).batch_code ?? 'Genesis'}
+                      </p>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2 md:col-span-2">
                       <Label>Timestamp</Label>
                       <p className="font-mono text-sm">{formatDate(selectedTransaction.timestamp)}</p>
                     </div>
-                    {selectedTransaction.batch_code && (
-                      <div className="space-y-2">
-                        <Label>Batch Code</Label>
-                        <p className="font-mono text-sm">{selectedTransaction.batch_code}</p>
-                      </div>
-                    )}
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Payload (data)</Label>
+                      <p className="font-mono text-xs break-all whitespace-pre-wrap">{selectedTransaction.data ?? '—'}</p>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             ) : (
               <div className="space-y-4">
-                {Array.isArray(transactions) && transactions.map((tx) => (
-                  <Card key={tx.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setSelectedTransaction(tx)}>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-2">
-                            <Badge className={getTransactionTypeColor(tx.transaction_type || 'unknown')}>
-                              {(tx.transaction_type || 'unknown').replace('_', ' ')}
-                            </Badge>
-                            <Badge className={getStatusColor(tx.status)}>
-                              {tx.status}
-                            </Badge>
+                {Array.isArray(transactions) &&
+                  transactions.map((tx) => {
+                    const parsed = parseTxPayload(tx.data)
+                    const ev = parsed.event_type ?? 'N/A'
+                    const batchLabel = parsed.batch_code ?? 'Genesis'
+                    return (
+                      <Card
+                        key={tx.id ?? tx.index}
+                        className="cursor-pointer hover:shadow-md transition-shadow"
+                        onClick={() => setSelectedTransaction(tx)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <Badge className={getTransactionTypeColor(ev)}>
+                                  {ev.replace(/_/g, ' ')}
+                                </Badge>
+                                <Badge variant="outline">Block #{tx.index}</Badge>
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                <p>
+                                  Hash:{' '}
+                                  {tx.hash ? `${tx.hash.slice(0, 20)}...` : 'N/A'}
+                                </p>
+                                <p>Block: #{tx.index}</p>
+                                <p>Event: {ev}</p>
+                                <p>Batch: {batchLabel}</p>
+                              </div>
+                            </div>
+                            <div className="text-right text-sm text-muted-foreground">
+                              <div>{formatDate(tx.timestamp)}</div>
+                              <div className="font-mono text-xs mt-1">Nonce {tx.nonce ?? '—'}</div>
+                            </div>
                           </div>
-                          <div className="text-sm text-gray-600">
-                            <p>Hash: {truncateHash(tx.transaction_hash)}</p>
-                            <p>From: {truncateHash(tx.from_address)} → To: {truncateHash(tx.to_address)}</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm text-gray-500">Amount</div>
-                          <div className="font-mono">{formatCurrency(tx.amount)}</div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
               </div>
             )}
           </div>
         )}
 
+        {activeTab === 'stats' && !loading && !stats && (
+          <p className="text-center text-muted-foreground py-8">
+            Network statistics could not be loaded. Try again or check the API.
+          </p>
+        )}
+
         {/* Stats Tab */}
-        {activeTab === 'stats' && stats && !loading && (
+        {activeTab === 'stats' && !loading && stats && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <Card>
@@ -522,7 +554,7 @@ export default function ExplorerPage() {
                 </CardHeader>
                 <CardContent>
                   <div className={`text-2xl font-bold ${getNetworkHealthColor(stats.network_health)}`}>
-                    {stats.network_health.toUpperCase()}
+                    {(stats.network_health ?? 'unknown').toUpperCase()}
                   </div>
                   <p className="text-xs text-muted-foreground">System status</p>
                 </CardContent>
@@ -538,8 +570,16 @@ export default function ExplorerPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-sm space-y-2">
-                  <p><strong>Mined:</strong> {formatDate(stats.last_block_time)}</p>
-                  <p><strong>Network Status:</strong> <span className={getNetworkHealthColor(stats.network_health)}>{stats.network_health}</span></p>
+                  <p>
+                    <strong>Mined:</strong>{' '}
+                    {stats.last_block_time ? formatDate(stats.last_block_time) : 'N/A'}
+                  </p>
+                  <p>
+                    <strong>Network Status:</strong>{' '}
+                    <span className={getNetworkHealthColor(stats.network_health)}>
+                      {stats.network_health ?? 'Unknown'}
+                    </span>
+                  </p>
                   <p><strong>Blockchain Integrity:</strong> <span className="text-green-600">✓ Verified</span></p>
                   <p><strong>Consensus Algorithm:</strong> Proof of Work</p>
                   <p><strong>Block Size Limit:</strong> 1 MB</p>

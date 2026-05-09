@@ -10,8 +10,8 @@ import os
 from contextlib import asynccontextmanager
 
 from config import APP_NAME, VERSION, DEBUG, ALLOWED_ORIGINS, API_PREFIX, QR_CODES_DIR
-from database import create_tables
-from utils.seed_data import run_seed
+from database import create_tables, SessionLocal
+from utils.seed_data import run_seed, add_demo_supply_chain_events
 
 # Import all routers
 from routes.auth import router as auth_router
@@ -27,24 +27,32 @@ from blockchain.chain import blockchain_manager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
-    print(f"🌿 Starting {APP_NAME} v{VERSION}...")
+    print(f"[START] Starting {APP_NAME} v{VERSION}...")
     
     # Create database tables
     create_tables()
-    print("✅ Database tables created/verified")
+    print("[OK] Database tables created/verified")
     
     # Initialize blockchain (create genesis block)
     blockchain_manager.init()
-    print("✅ Blockchain initialized")
+    print("[OK] Blockchain initialized")
     
     # Run seed data if database is empty
     run_seed()
-    print("✅ Seed data initialized")
+    print("[OK] Seed data initialized")
+    
+    # Add demo supply chain events to existing batches
+    db = SessionLocal()
+    try:
+        add_demo_supply_chain_events()
+        print("[OK] Demo supply chain events added")
+    finally:
+        db.close()
     
     yield
     
     # Shutdown
-    print("🛑 Shutting down...")
+    print("[STOP] Shutting down...")
 
 # Create FastAPI application
 app = FastAPI(
@@ -209,16 +217,16 @@ async def validation_error_handler(request, exc):
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
-    print(f"🚀 {APP_NAME} API is ready!")
-    print(f"   📚 API Documentation: http://localhost:8000/docs")
-    print(f"   🔗 API Base URL: http://localhost:8000{API_PREFIX}")
-    print(f"   🌱 QR Codes: http://localhost:8000/qr_codes")
-    print(f"   ❤️  Health Check: http://localhost:8000/health")
+    print(f"[READY] {APP_NAME} API is ready!")
+    print(f"   [DOCS] API Documentation: http://localhost:8000/docs")
+    print(f"   [API] API Base URL: http://localhost:8000{API_PREFIX}")
+    print(f"   [QR] QR Codes: http://localhost:8000/qr_codes")
+    print(f"   [HEALTH] Health Check: http://localhost:8000/health")
 
 if __name__ == "__main__":
     import uvicorn
     
-    print(f"🌿 Starting {APP_NAME} development server...")
+    print(f"[START] Starting {APP_NAME} development server...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
