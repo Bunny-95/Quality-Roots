@@ -36,11 +36,12 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
               <p className="text-muted-foreground mb-6">
                 Please log in to access this page.
               </p>
-              <Button 
+              <Button
                 onClick={() => {
                   // Store the attempted location for redirect after login
                   localStorage.setItem('redirect_after_login', location.pathname)
-                  window.location.href = '/login'
+                  window.location.replace('/login')
+
                 }}
                 className="w-full"
               >
@@ -64,7 +65,7 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
               <p className="text-muted-foreground mb-6">
                 You don't have permission to access this page.
               </p>
-              <Button 
+              <Button
                 onClick={() => window.history.back()}
                 variant="outline"
                 className="w-full"

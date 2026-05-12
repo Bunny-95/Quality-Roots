@@ -81,8 +81,9 @@ export default function LoginPage() {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    e.stopPropagation()
     
     if (!validateForm()) {
       return
@@ -132,7 +133,10 @@ export default function LoginPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+          <form 
+  onSubmit={(e) => { e.preventDefault(); handleSubmit(e); }} 
+  className="space-y-4"
+>
               {/* Email Field */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -178,10 +182,10 @@ export default function LoginPage() {
 
               {/* Submit Button */}
               <Button
-                type="button"
+                type="submit"
                 className="w-full organic-gradient"
                 disabled={isSubmitting || isLoading}
-                onClick={handleSubmit}
+                
               >
                 {isSubmitting || isLoading ? 'Signing in...' : 'Sign In'}
               </Button>

@@ -84,7 +84,8 @@ export default function AIAnalyticsPage() {
 
       // Load AI model statistics
       const modelsResponse = await aiApi.getModelStats()
-      setModelStats(modelsResponse.data)
+      const modelsData = modelsResponse.data
+      setModelStats(Array.isArray(modelsData) ? modelsData : [])
 
       // Load quality analytics
       const qualityResponse = await aiApi.getQualityAnalytics()
@@ -96,7 +97,8 @@ export default function AIAnalyticsPage() {
 
       // Load demand forecasts
       const forecastResponse = await aiApi.getDemandForecasts()
-      setDemandForecasts(forecastResponse.data)
+      const forecastData = forecastResponse.data
+      setDemandForecasts(Array.isArray(forecastData) ? forecastData : [])
 
     } catch (err: any) {
       console.error('Error loading analytics data:', err)
@@ -254,7 +256,10 @@ export default function AIAnalyticsPage() {
       {activeTab === 'models' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {modelStats.map((model) => (
+            {Array.isArray(modelStats) && modelStats.length === 0 && (
+              <p className="text-muted-foreground col-span-3 text-center py-8">No model data available.</p>
+            )}
+            {Array.isArray(modelStats) && modelStats.map((model) => (
               <Card key={model.model_name}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -485,7 +490,10 @@ export default function AIAnalyticsPage() {
       {activeTab === 'forecast' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {demandForecasts.map((forecast) => (
+            {Array.isArray(demandForecasts) && demandForecasts.length === 0 && (
+              <p className="text-muted-foreground col-span-3 text-center py-8">No forecast data available.</p>
+            )}
+            {Array.isArray(demandForecasts) && demandForecasts.map((forecast) => (
               <Card key={forecast.product_name}>
                 <CardHeader>
                   <CardTitle className="text-lg">{forecast.product_name}</CardTitle>

@@ -186,3 +186,5 @@ export function hasRole(user: User | null, role: string): boolean {
 export function hasAnyRole(user: User | null, roles: string[]): boolean {
   return user ? roles.includes(user.role) : false
 }
+
+

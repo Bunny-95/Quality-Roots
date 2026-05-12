@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth'
-import { adminApi } from '@/lib/api'
+import api, { adminApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency } from '@/lib/utils'
+import toast from 'react-hot-toast'
 
 interface SystemStats {
   total_users: number
@@ -77,6 +78,63 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadDashboardData()
   }, [])
+
+  const handleExportReports = async () => {
+    try {
+      const [users, batches, blockchain] = await Promise.all([
+        api.get('/admin/users'),
+        api.get('/admin/batches'),
+        api.get('/blockchain/chain')
+      ])
+      const report = {
+        generated_at: new Date().toISOString(),
+        total_users: users.data.length,
+        total_batches: batches.data.length,
+        users: users.data,
+        batches: batches.data,
+        blockchain_length: blockchain.data.length
+      }
+      const printWindow = window.open('', '_blank')
+      printWindow!.document.write(`
+        <html><head><title>Organic Roots System Report</title>
+        <style>
+          body{font-family:Arial,sans-serif;padding:20px}
+          h1{color:#2D6A4F}
+          table{width:100%;border-collapse:collapse;margin-top:20px}
+          th{background:#2D6A4F;color:white;padding:8px;text-align:left}
+          td{padding:8px;border-bottom:1px solid #ddd}
+          tr:nth-child(even){background:#f9f9f9}
+        </style></head>
+        <body>
+          <h1>Organic Roots — System Report</h1>
+          <p>Generated: ${new Date().toLocaleDateString()}</p>
+          <h2>Summary</h2>
+          <p>Total Users: ${report.total_users}</p>
+          <p>Total Batches: ${report.total_batches}</p>
+          <p>Blockchain Length: ${report.blockchain_length} blocks</p>
+          <h2>Users</h2>
+          <table>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Location</th><th>Joined</th></tr>
+            ${users.data.map((u: any) => `<tr><td>${u.name}</td><td>${u.email}</td><td>${u.role}</td><td>${u.location || 'N/A'}</td><td>${new Date(u.created_at).toLocaleDateString()}</td></tr>`).join('')}
+          </table>
+          <h2>Batches</h2>
+          <table>
+            <tr><th>Batch Code</th><th>Grade</th><th>Quantity</th><th>Date</th></tr>
+            ${batches.data.map((b: any) => `<tr><td>${b.batch_code}</td><td>${b.grade}</td><td>${Number(b.quantity_kg).toFixed(2)} kg</td><td>${new Date(b.created_at).toLocaleDateString()}</td></tr>`).join('')}
+          </table>
+        </body></html>
+      `)
+      printWindow!.document.close()
+      printWindow!.print()
+    } catch (error) {
+      console.error('Export failed:', error)
+      toast.error('Failed to export reports')
+    }
+  }
+
+  const handleSystemSettings = () => {
+    toast.success('System settings — coming in next version!')
+  }
 
   const loadDashboardData = async () => {
     try {
@@ -181,8 +239,8 @@ export default function AdminDashboard() {
           </p>
         </div>
         <div className="flex space-x-2">
-          <Button variant="outline">Export Reports</Button>
-          <Button className="organic-gradient">System Settings</Button>
+          <Button variant="outline" onClick={handleExportReports}>Export Reports</Button>
+          <Button className="organic-gradient" onClick={handleSystemSettings}>System Settings</Button>
         </div>
       </div>
 

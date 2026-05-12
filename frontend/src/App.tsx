@@ -30,10 +30,16 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          
+          <Route path="/dashboard/consumer" element={
+            <ProtectedRoute allowedRoles={['consumer']}>
+              <Layout>
+                <VerifyPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
           {/* Consumer Routes (Public) */}
           <Route path="/verify" element={<VerifyPage />} />
-          
+
           {/* Protected Routes */}
           <Route path="/dashboard" element={
             <ProtectedRoute allowedRoles={['farmer', 'admin']}>
@@ -64,35 +70,35 @@ function App() {
             </ProtectedRoute>
           } />
           <Route path="/select-dashboard" element={<DashboardRedirect />} />
-          
+
           {/* Fallback */}
           <Route path="*" element={<LandingPage />} />
         </Routes>
-      
-      {/* Global Toast Notifications */}
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 4000,
-          style: {
-            background: 'hsl(var(--background))',
-            color: 'hsl(var(--foreground))',
-            border: '1px solid hsl(var(--border))',
-          },
-          success: {
-            iconTheme: {
-              primary: 'hsl(var(--primary))',
-              secondary: 'hsl(var(--primary-foreground))',
+
+        {/* Global Toast Notifications */}
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: 'hsl(var(--background))',
+              color: 'hsl(var(--foreground))',
+              border: '1px solid hsl(var(--border))',
             },
-          },
-          error: {
-            iconTheme: {
-              primary: 'hsl(var(--destructive))',
-              secondary: 'hsl(var(--destructive-foreground))',
+            success: {
+              iconTheme: {
+                primary: 'hsl(var(--primary))',
+                secondary: 'hsl(var(--primary-foreground))',
+              },
             },
-          },
-        }}
-      />
+            error: {
+              iconTheme: {
+                primary: 'hsl(var(--destructive))',
+                secondary: 'hsl(var(--destructive-foreground))',
+              },
+            },
+          }}
+        />
       </div>
     </AuthProvider>
   )

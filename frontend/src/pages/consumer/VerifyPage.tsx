@@ -23,10 +23,23 @@ interface BatchDetails {
   qr_code_url?: string
   farmer_name: string
   farmer_location: string
+  /** Model confidence 0–1 from API; also accept legacy field names */
   ai_confidence?: number
+  confidence?: number
+  confidence_score?: number
   blockchain_verified: boolean
   fraud_free?: boolean
   origin_state?: string
+}
+
+function formatAiConfidencePercent(batch: BatchDetails): string {
+  const raw =
+    batch.ai_confidence ?? batch.confidence ?? batch.confidence_score
+  if (raw === undefined || raw === null) return 'N/A'
+  const n = Number(raw)
+  if (Number.isNaN(n)) return 'N/A'
+  const pct = n <= 1 ? n * 100 : n
+  return `${pct.toFixed(1)}%`
 }
 
 interface SupplyChainEvent {
@@ -214,8 +227,8 @@ export default function VerifyPage() {
                       </Badge>
                     )}
                   </CardTitle>
-                  <Badge className={getStatusColor(batchDetails.status || 'unknown')}>
-                    {(batchDetails.status || 'unknown').replace('_', ' ')}
+                  <Badge className={getStatusColor(batchDetails.status || 'Active')}>
+                    {(batchDetails.status || 'Active').replace(/_/g, ' ')}
                   </Badge>
                 </div>
                 <CardDescription>
@@ -233,7 +246,7 @@ export default function VerifyPage() {
                   </div>
                   <div className="text-center p-4 border rounded-lg">
                     <div className="text-2xl font-bold text-blue-600 mb-2">
-                      {batchDetails.ai_confidence ?? 'N/A'}%
+                      {formatAiConfidencePercent(batchDetails)}
                     </div>
                     <p className="text-sm font-medium">AI Confidence</p>
                     <p className="text-xs text-muted-foreground">Grading Accuracy</p>
